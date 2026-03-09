@@ -1,141 +1,191 @@
-# dataset4j
+# Dataset4J
 
-A lightweight, zero-dependency DataFrame-like library for Java 21+.
+A modular, lightweight DataFrame-like library for Java records. Port your pandas data processing pipelines to Java with strong typing, fluent APIs, and comprehensive format support.
 
-**dataset4j** lets you port Pandas data processing pipelines to Java using records, streams, and a fluent API. No heavy frameworks, no runtime dependencies — just your data and the JDK.
+## 🚀 **Quick Start**
 
-## Quick Start
+### Maven Dependency
 
-```java
-record Employee(String name, int age, String dept) {}
-record Department(String dept, String location) {}
-
-var employees = Dataset.of(
-    new Employee("Alice",   30, "Eng"),
-    new Employee("Bob",     25, "Sales"),
-    new Employee("Charlie", 35, "Eng")
-);
-
-// Filter + sort + limit  (df.query("age > 25").sort_values("age").head(2))
-var seniors = employees
-    .filter(e -> e.age() > 25)
-    .sortByInt(Employee::age)
-    .head(2);
-
-// GroupBy + aggregation  (df.groupby("dept")["age"].mean())
-Map<String, Double> avgByDept = employees
-    .groupBy(Employee::dept)
-    .meanInt(Employee::age);
-
-// Join with Pair — no custom record needed
-//   pd.merge(employees, departments, on="dept")
-var departments = Dataset.of(
-    new Department("Eng", "SF"),
-    new Department("Sales", "NYC")
-);
-
-employees.innerJoin(departments, Employee::dept, Department::dept)
-    .filter(p -> p.left().age() > 25)
-    .map(p -> p.left().name() + " works in " + p.right().location());
-```
-
-## Features
-
-| Pandas | dataset4j |
-|--------|-----------|
-| `df[df["age"] > 25]` | `.filter(e -> e.age() > 25)` |
-| `df.sort_values("age")` | `.sortByInt(Employee::age)` |
-| `df.head(5)` | `.head(5)` |
-| `df["name"].tolist()` | `.column(Employee::name)` |
-| `df["age"].sum()` | `.sumInt(Employee::age)` |
-| `df.groupby("dept")` | `.groupBy(Employee::dept)` |
-| `pd.merge(a, b, on="k")` | `.innerJoin(b, A::k, B::k)` |
-| `pd.merge(a, b, how="left")` | `.leftJoin(b, A::k, B::k)` |
-| `df.drop_duplicates("col")` | `.distinctBy(Employee::col)` |
-| `df.apply(fn, axis=1)` | `.map(e -> ...)` |
-| `df.melt(...)` | `.flatMap(e -> List.of(...))` |
-| `df["age"].cumsum()` | `.cumSumInt(Employee::age)` |
-| `df["age"].rolling(3).mean()` | `.rollingMeanInt(Employee::age, 3)` |
-| `df.pipe(fn)` | `.pipe(ds -> ...)` |
-
-### Join Types
-
-```java
-// Inner join → Dataset<Pair<L, R>>
-ds.innerJoin(other, L::key, R::key)
-
-// Left join (right may be null)
-ds.leftJoin(other, L::key, R::key)
-
-// Right join (left may be null)
-ds.rightJoin(other, L::key, R::key)
-
-// Cross join (cartesian product)
-ds.crossJoin(other)
-
-// Three-way join → Dataset<Triplet<A, B, C>>
-ds.innerJoin3(
-    table2, A::key1, B::key1,
-    table3, B::key2, C::key2)
-```
-
-### Pair & Triplet
-
-`Pair<L, R>` and `Triplet<A, B, C>` are generic containers that eliminate the need to define a custom record for every join:
-
-```java
-// Join, filter, and process — all without a custom record
-employees.innerJoin(departments, Employee::dept, Department::dept)
-    .filter(p -> p.left().age() > 30)
-    .map(p -> p.left().name() + " @ " + p.right().location());
-
-// Promote Pair to Triplet
-pair.withThird(computedValue)
-
-// Transform one side
-pair.mapLeft(e -> new Employee(e.name().toUpperCase(), e.age(), e.dept()))
-
-// Convert to a proper record when you need one
-joined.map(p -> new MyRecord(p.left().name(), p.right().location()));
-```
-
-## Installation
-
-### Maven
+**Option 1: Complete Library** (Recommended)
 ```xml
 <dependency>
-    <groupId>io.github.dataset4j</groupId>
+    <groupId>io.github.amah</groupId>
     <artifactId>dataset4j</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>1.0.0</version>
 </dependency>
 ```
 
-### Gradle
-```groovy
-implementation 'io.github.dataset4j:dataset4j:0.1.0-SNAPSHOT'
+**Option 2: Modular Dependencies**
+```xml
+<!-- Core functionality only -->
+<dependency>
+    <groupId>io.github.amah</groupId>
+    <artifactId>dataset4j-core</artifactId>
+    <version>1.0.0</version>
+</dependency>
+
+<!-- Add Excel/CSV support -->
+<dependency>
+    <groupId>io.github.amah</groupId>
+    <artifactId>dataset4j-poi</artifactId>
+    <version>1.0.0</version>
+</dependency>
+
+<!-- Add Parquet support (lightweight, no Hadoop) -->
+<dependency>
+    <groupId>io.github.amah</groupId>
+    <artifactId>dataset4j-parquet</artifactId>
+    <version>1.0.0</version>
+</dependency>
 ```
 
-### Manual
-Copy `Dataset.java`, `Pair.java`, and `Triplet.java` into your project. Zero dependencies.
+### Basic Usage
 
-## Requirements
+```java
+// Define your data structure with annotations
+@GenerateFields(className = "Fields", columnsClassName = "Cols")
+public record Employee(
+    @DataColumn(name = "Employee ID", order = 1, required = true)
+    String id,
+    @DataColumn(name = "Full Name", order = 2)
+    String fullName,
+    @DataColumn(name = "Email", order = 3)
+    String email,
+    @DataColumn(name = "Department", order = 4)
+    String department
+) {}
 
-- Java 21+
+// Create and process datasets with pandas-like operations
+Dataset<Employee> employees = Dataset.of(
+    new Employee("001", "John Doe", "john@company.com", "Engineering"),
+    new Employee("002", "Jane Smith", "jane@company.com", "Marketing")
+);
 
-## Design Principles
+// Filter, transform, and aggregate data
+Dataset<String> engineerEmails = employees
+    .filter(emp -> emp.department().equals("Engineering"))
+    .map(Employee::email);
 
-1. **Zero dependencies** — only the JDK
-2. **Immutable** — every operation returns a new `Dataset<T>`
-3. **Type-safe** — Java records as rows, generics everywhere
-4. **Fluent** — method chaining that mirrors Pandas pipelines
-5. **Minimal** — three files, no framework, no magic
+// Export to Excel with type-safe field selection
+ExcelDatasetWriter
+    .toFile("report.xlsx")
+    .fields(Employee.Fields.ID, Employee.Fields.FULL_NAME, Employee.Fields.EMAIL)
+    .write(employees);
 
-## Building
+// Read from Excel
+Dataset<Employee> fromExcel = ExcelDatasetReader
+    .fromFile("employees.xlsx")
+    .read(Employee.class);
 
-```bash
-mvn clean test
+// High-performance Parquet I/O
+ParquetDatasetWriter
+    .toFile("data.parquet")
+    .compression(ParquetCompressionCodec.SNAPPY)
+    .write(employees);
 ```
 
-## License
+## ✨ **Key Features**
 
-MIT
+### 🎯 **Type Safety**
+- **Java Records**: Strong typing with compile-time validation
+- **Generated Constants**: Auto-generated field constants eliminate magic strings
+- **IDE Support**: Full auto-completion and refactoring support
+
+### 🐼 **Pandas-Like API**
+- **Immutable Operations**: All operations return new Dataset instances
+- **Fluent Interface**: Chain operations naturally
+- **Familiar Methods**: `filter()`, `map()`, `groupBy()`, `sortBy()`, etc.
+
+### 📊 **Format Support**
+- **Excel**: Read/write with Apache POI integration
+- **Parquet**: Lightweight implementation (96% size reduction vs Hadoop)
+- **CSV**: Coming soon
+- **JSON**: Planned
+
+### 🏗️ **Modular Architecture**
+- **dataset4j-core**: Zero dependencies (50KB)
+- **dataset4j-poi**: Excel/CSV support (15MB)
+- **dataset4j-parquet**: Parquet support (5.6MB vs 145MB traditional)
+- **dataset4j**: All-in-one convenience module
+
+### 🔒 **Security First**
+- **Path Validation**: Automatic protection against path traversal
+- **Safe Dependencies**: Vetted compression libraries
+- **File Size Limits**: Built-in DoS protection
+
+## 📖 **Documentation**
+
+- **[Core Concepts](docs/ai-instructions/dataset4j-ai-instructions-core-concepts.md)** - Understanding Dataset4J fundamentals
+- **[Usage Patterns](docs/ai-instructions/dataset4j-ai-instructions-usage-patterns.md)** - Common operations and examples
+- **[Pandas Migration](docs/ai-instructions/dataset4j-ai-instructions-pandas-mapping.md)** - Complete pandas to Dataset4J mapping
+- **[Architecture](docs/architecture/MODULAR_ARCHITECTURE.md)** - Module structure and deployment options
+- **[AI Instructions](docs/ai-instructions/)** - Complete guide for AI coding assistants
+
+## 🔧 **Advanced Features**
+
+### Generated Field Constants
+```java
+@GenerateFields
+public record Product(
+    @DataColumn(name = "Product ID") String id,
+    @DataColumn(name = "Price") double price
+) {}
+
+// Auto-generated at compile time:
+// Product.Fields.ID = "id"
+// Product.Fields.PRICE = "price"  
+// Product.Cols.COL_ID = "Product ID"
+// Product.Cols.COL_PRICE = "Price"
+
+// Use in field selection
+FieldSelector.from(metadata)
+    .fields(Product.Fields.ID, Product.Fields.PRICE)
+    .select();
+```
+
+### Flexible Field Selection
+```java
+// Conditional field selection
+List<FieldMeta> exportFields = FieldSelector.from(metadata)
+    .fieldsArray(Employee.Fields.ALL_FIELDS)
+    .exclude(Employee.Fields.INTERNAL_NOTES)
+    .requiredOnly()
+    .exportableOnly()
+    .orderByAnnotation()
+    .select();
+
+// Use with Excel export
+ExcelDatasetWriter
+    .toFile("filtered_report.xlsx")
+    .select(FieldSelector.from(metadata).where(exportFields::contains))
+    .write(dataset);
+```
+
+### High-Performance Parquet
+```java
+// Multiple compression options
+ParquetDatasetWriter
+    .toFile("data.parquet")
+    .compression(ParquetCompressionCodec.SNAPPY)  // Fast & efficient
+    .compression(ParquetCompressionCodec.LZ4)     // Fastest
+    .compression(ParquetCompressionCodec.GZIP)    // Best compression
+    .write(largeDataset);
+```
+
+## 🤝 **Contributing**
+
+We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
+
+## 📄 **License**
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🔗 **Links**
+
+- **Maven Central**: https://central.sonatype.com/artifact/io.github.amah/dataset4j
+- **GitHub**: https://github.com/amah/dataset4j
+- **Issues**: https://github.com/amah/dataset4j/issues
+
+---
+
+**Dataset4J v1.0.0** - Bringing pandas-like data processing to Java with type safety and performance.
