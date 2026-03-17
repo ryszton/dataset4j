@@ -779,6 +779,229 @@ class DatasetTest {
     }
 
     // -----------------------------------------------------------------
+    // Key Constructs — additional edge case tests
+    // -----------------------------------------------------------------
+
+    @Nested class KeyConstructs {
+
+        // -- Pair utilities in join context --
+
+        @Test void pairHasLeftAndHasRightOnInnerJoin() {
+            var depts = Dataset.of(new Department("Eng", "SF"));
+            var joined = EMPLOYEES.innerJoin(depts, Employee::dept, Department::dept);
+            assertTrue(joined.all(Pair::hasLeft));
+            assertTrue(joined.all(Pair::hasRight));
+        }
+
+        @Test void pairNullRightOnLeftJoinMiss() {
+            var depts = Dataset.of(new Department("HR", "Chicago"));
+            var joined = EMPLOYEES.leftJoin(depts, Employee::dept, Department::dept);
+            // No employee is in HR, so all right sides are null
+            assertEquals(5, joined.size());
+            assertTrue(joined.all(p -> !p.hasRight()));
+        }
+
+        @Test void pairNullLeftOnRightJoinMiss() {
+            var emptyEmployees = Dataset.<Employee>empty();
+            var depts = Dataset.of(new Department("Eng", "SF"));
+            var joined = emptyEmployees.rightJoin(depts, Employee::dept, Department::dept);
+            assertEquals(1, joined.size());
+            assertNull(joined.get(0).left());
+            assertEquals("Eng", joined.get(0).right().dept());
+        }
+
+        // -- Join on empty datasets --
+
+        @Test void innerJoinEmptyLeft() {
+            var depts = Dataset.of(new Department("Eng", "SF"));
+            var joined = Dataset.<Employee>empty().innerJoin(depts, Employee::dept, Department::dept);
+            assertTrue(joined.isEmpty());
+        }
+
+        @Test void innerJoinEmptyRight() {
+            var joined = EMPLOYEES.innerJoin(Dataset.<Department>empty(), Employee::dept, Department::dept);
+            assertTrue(joined.isEmpty());
+        }
+
+        @Test void leftJoinEmptyRight() {
+            var joined = EMPLOYEES.leftJoin(Dataset.<Department>empty(), Employee::dept, Department::dept);
+            assertEquals(5, joined.size());
+            assertTrue(joined.all(p -> !p.hasRight()));
+        }
+
+        @Test void crossJoinWithEmpty() {
+            var joined = EMPLOYEES.crossJoin(Dataset.<Department>empty());
+            assertTrue(joined.isEmpty());
+        }
+
+        // -- Duplicate keys in join --
+
+        @Test void innerJoinDuplicateRightKeys() {
+            // Two departments with same key → each left row matches both
+            var depts = Dataset.of(
+                new Department("Eng", "SF"),
+                new Department("Eng", "NYC")
+            );
+            var engEmployees = EMPLOYEES.filter(e -> e.dept().equals("Eng")); // 3 employees
+            var joined = engEmployees.innerJoin(depts, Employee::dept, Department::dept);
+            assertEquals(6, joined.size()); // 3 employees × 2 departments
+        }
+
+        @Test void innerJoinDuplicateLeftKeys() {
+            var depts = Dataset.of(new Department("Eng", "SF"));
+            var engEmployees = EMPLOYEES.filter(e -> e.dept().equals("Eng")); // 3 employees
+            var joined = engEmployees.innerJoin(depts, Employee::dept, Department::dept);
+            assertEquals(3, joined.size());
+        }
+
+        // -- Multi-key join edge cases --
+
+        @Test void multiKeyJoinNoMatches() {
+            record EmpLoc(String name, String dept, String location) {}
+            record DeptLoc(String dept, String location, String manager) {}
+
+            var emps = Dataset.of(new EmpLoc("Alice", "Eng", "SF"));
+            var depts = Dataset.of(new DeptLoc("Eng", "NYC", "Boss")); // same dept, different location
+
+            var joined = emps.innerJoinMulti(depts,
+                e -> CompositeKey.of(e.dept(), e.location()),
+                d -> CompositeKey.of(d.dept(), d.location()));
+            assertTrue(joined.isEmpty());
+        }
+
+        @Test void multiKeyJoinPartialKeyMatch() {
+            record EmpLoc(String name, String dept, String location) {}
+            record DeptLoc(String dept, String location, String manager) {}
+
+            var emps = Dataset.of(
+                new EmpLoc("Alice", "Eng", "SF"),
+                new EmpLoc("Bob", "Eng", "NYC")
+            );
+            var depts = Dataset.of(
+                new DeptLoc("Eng", "SF", "Manager1"),
+                new DeptLoc("Sales", "NYC", "Manager2") // dept doesn't match Bob
+            );
+
+            var joined = emps.innerJoin2(depts,
+                EmpLoc::dept, EmpLoc::location,
+                DeptLoc::dept, DeptLoc::location);
+            assertEquals(1, joined.size());
+            assertEquals("Alice", joined.get(0).left().name());
+        }
+
+        @Test void fluentJoinOnEmptyDataset() {
+            record EmpLoc(String name, String dept, String location) {}
+            record DeptLoc(String dept, String location, String manager) {}
+
+            var emps = Dataset.<EmpLoc>empty();
+            var depts = Dataset.of(new DeptLoc("Eng", "SF", "Boss"));
+
+            var joined = emps.innerJoinOn(depts,
+                on(EmpLoc::dept, EmpLoc::location),
+                on(DeptLoc::dept, DeptLoc::location));
+            assertTrue(joined.isEmpty());
+        }
+
+        @Test void rightJoinMultiPreservesUnmatchedRight() {
+            record EmpLoc(String name, String dept, String location) {}
+            record DeptLoc(String dept, String location, String manager) {}
+
+            var emps = Dataset.of(new EmpLoc("Alice", "Eng", "SF"));
+            var depts = Dataset.of(
+                new DeptLoc("Eng", "SF", "Manager1"),
+                new DeptLoc("Eng", "NYC", "Manager2")
+            );
+
+            var joined = emps.rightJoinMulti(depts,
+                e -> CompositeKey.of(e.dept(), e.location()),
+                d -> CompositeKey.of(d.dept(), d.location()));
+            assertEquals(2, joined.size());
+
+            var nycDept = joined.stream()
+                .filter(p -> p.right().location().equals("NYC"))
+                .findFirst().orElseThrow();
+            assertNull(nycDept.left());
+        }
+
+        // -- CompositeKey edge cases --
+
+        @Test void compositeKeySingleComponent() {
+            var key = CompositeKey.of("only");
+            assertEquals(1, key.size());
+            assertEquals("only", key.get(0));
+        }
+
+        @Test void compositeKeyWithNullComponent() {
+            var key1 = CompositeKey.of("a", null);
+            var key2 = CompositeKey.of("a", null);
+            assertEquals(key1, key2);
+            assertEquals(key1.hashCode(), key2.hashCode());
+        }
+
+        @Test void compositeKeyDifferentLengthsNotEqual() {
+            var key2 = CompositeKey.of("a", "b");
+            var key3 = CompositeKey.of("a", "b", "c");
+            assertNotEquals(key2, key3);
+        }
+
+        @Test void compositeKeyNotEqualToNull() {
+            var key = CompositeKey.of("a", "b");
+            assertNotEquals(null, key);
+        }
+
+        @Test void compositeKeyNotEqualToOtherType() {
+            var key = CompositeKey.of("a", "b");
+            assertNotEquals("ab", key);
+        }
+
+        // -- Chaining join results --
+
+        @Test void chainingJoinWithFilterAndMap() {
+            var depts = Dataset.of(
+                new Department("Eng", "SF"),
+                new Department("Sales", "NYC")
+            );
+
+            var result = EMPLOYEES
+                .leftJoin(depts, Employee::dept, Department::dept)
+                .filter(Pair::hasRight)
+                .filter(p -> p.left().age() > 28)
+                .map(p -> p.left().name() + "@" + p.right().location());
+
+            assertEquals(3, result.size());
+            assertTrue(result.toList().contains("Alice@SF"));
+            assertTrue(result.toList().contains("Charlie@SF"));
+            assertTrue(result.toList().contains("Eve@SF"));
+        }
+
+        // -- GroupedDataset key constructs --
+
+        @Test void groupedDatasetGetMissingKey() {
+            var grouped = EMPLOYEES.groupBy(Employee::dept);
+            var missing = grouped.get("HR");
+            assertTrue(missing.isEmpty());
+        }
+
+        @Test void groupedDatasetMaxAndMin() {
+            var grouped = EMPLOYEES.groupBy(Employee::dept);
+            var maxAge = grouped.maxInt(Employee::age);
+            assertEquals(35, maxAge.get("Eng").orElse(0));
+            assertEquals(28, maxAge.get("Sales").orElse(0));
+
+            var minAge = grouped.minInt(Employee::age);
+            assertEquals(30, minAge.get("Eng").orElse(0));
+            assertEquals(25, minAge.get("Sales").orElse(0));
+        }
+
+        @Test void groupedDatasetToMap() {
+            var map = EMPLOYEES.groupBy(Employee::dept).toMap();
+            assertEquals(2, map.size());
+            assertEquals(3, map.get("Eng").size());
+            assertEquals(2, map.get("Sales").size());
+        }
+    }
+
+    // -----------------------------------------------------------------
     // toString
     // -----------------------------------------------------------------
 
