@@ -216,6 +216,42 @@ class DatasetTest {
             assertEquals("Bob", result.get(1).name());     // first Sales
         }
 
+        @Test void distinctByTwoKeys() {
+            record Row(String dept, String location, String name) {}
+            var ds = Dataset.of(
+                new Row("Eng", "SF", "Alice"),
+                new Row("Eng", "SF", "Bob"),     // duplicate dept+location
+                new Row("Eng", "NYC", "Charlie"),
+                new Row("Sales", "SF", "Diana")
+            );
+            var result = ds.distinctBy(Row::dept, Row::location);
+            assertEquals(3, result.size()); // Eng-SF, Eng-NYC, Sales-SF
+            assertEquals("Alice", result.get(0).name()); // keeps first
+        }
+
+        @Test void distinctByThreeKeys() {
+            record Row(String dept, String location, String role, String name) {}
+            var ds = Dataset.of(
+                new Row("Eng", "SF", "Backend", "Alice"),
+                new Row("Eng", "SF", "Backend", "Bob"),   // duplicate
+                new Row("Eng", "SF", "Frontend", "Charlie"),
+                new Row("Sales", "NYC", "Sales", "Diana")
+            );
+            var result = ds.distinctBy(Row::dept, Row::location, Row::role);
+            assertEquals(3, result.size());
+            assertEquals("Alice", result.get(0).name());
+        }
+
+        @Test void distinctByTwoKeysEmpty() {
+            var result = Dataset.<Employee>empty().distinctBy(Employee::dept, Employee::name);
+            assertTrue(result.isEmpty());
+        }
+
+        @Test void distinctByTwoKeysNoDuplicates() {
+            var result = EMPLOYEES.distinctBy(Employee::name, Employee::dept);
+            assertEquals(5, result.size()); // all unique
+        }
+
         @Test void distinct() {
             var ds = Dataset.of(
                 new Employee("A", 1, "X"),
