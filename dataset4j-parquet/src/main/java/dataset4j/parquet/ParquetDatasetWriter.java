@@ -1,11 +1,11 @@
 package dataset4j.parquet;
 
 import dataset4j.Dataset;
-import dataset4j.annotations.AnnotationProcessor;
-import dataset4j.annotations.ColumnMetadata;
+import dataset4j.annotations.*;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.lang.reflect.RecordComponent;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Lightweight Parquet writer with minimal dependencies.
@@ -35,6 +36,11 @@ public class ParquetDatasetWriter {
     private int rowGroupSize = 50000;
     private boolean enableDictionary = true;
     private Map<String, Object> metadata = new HashMap<>();
+
+    // Field selection support
+    private PojoMetadata<?> pojoMetadata;
+    private FieldSelector<?> fieldSelector;
+    private List<FieldMeta> selectedFields;
     
     private ParquetDatasetWriter(String filePath) {
         this.filePath = Paths.get(filePath);
@@ -96,6 +102,115 @@ public class ParquetDatasetWriter {
     }
     
     /**
+     * Select specific fields to export by field names.
+     * @param fieldNames field names to include
+     * @return this writer for chaining
+     */
+    public ParquetDatasetWriter fields(String... fieldNames) {
+        if (pojoMetadata != null) {
+            this.fieldSelector = FieldSelector.from(pojoMetadata).fields(fieldNames);
+        }
+        return this;
+    }
+
+    /**
+     * Select specific fields to export by column names.
+     * @param columnNames column names to include
+     * @return this writer for chaining
+     */
+    public ParquetDatasetWriter columns(String... columnNames) {
+        if (pojoMetadata != null) {
+            this.fieldSelector = FieldSelector.from(pojoMetadata).columns(columnNames);
+        }
+        return this;
+    }
+
+    /**
+     * Select fields using generated field constants array.
+     * @param fieldConstants array of field name constants
+     * @return this writer for chaining
+     */
+    public ParquetDatasetWriter fieldsArray(String[] fieldConstants) {
+        if (pojoMetadata != null) {
+            this.fieldSelector = FieldSelector.from(pojoMetadata).fieldsArray(fieldConstants);
+        }
+        return this;
+    }
+
+    /**
+     * Select fields using generated column constants array.
+     * @param columnConstants array of column name constants
+     * @return this writer for chaining
+     */
+    public ParquetDatasetWriter columnsArray(String[] columnConstants) {
+        if (pojoMetadata != null) {
+            this.fieldSelector = FieldSelector.from(pojoMetadata).columnsArray(columnConstants);
+        }
+        return this;
+    }
+
+    /**
+     * Exclude specific fields from export.
+     * @param fieldNames field names to exclude
+     * @return this writer for chaining
+     */
+    public ParquetDatasetWriter exclude(String... fieldNames) {
+        if (pojoMetadata != null) {
+            if (this.fieldSelector == null) {
+                this.fieldSelector = FieldSelector.from(pojoMetadata);
+            }
+            this.fieldSelector = this.fieldSelector.exclude(fieldNames);
+        }
+        return this;
+    }
+
+    /**
+     * Select only required fields for export.
+     * @return this writer for chaining
+     */
+    public ParquetDatasetWriter requiredOnly() {
+        if (pojoMetadata != null) {
+            this.fieldSelector = FieldSelector.from(pojoMetadata).requiredOnly();
+        }
+        return this;
+    }
+
+    /**
+     * Select only exportable fields (not ignored or hidden).
+     * @return this writer for chaining
+     */
+    public ParquetDatasetWriter exportableOnly() {
+        if (pojoMetadata != null) {
+            this.fieldSelector = FieldSelector.from(pojoMetadata).exportableOnly();
+        }
+        return this;
+    }
+
+    /**
+     * Use pre-built metadata for field selection.
+     * @param <T> record type
+     * @param metadata POJO metadata
+     * @return this writer for chaining
+     */
+    @SuppressWarnings("unchecked")
+    public <T> ParquetDatasetWriter select(PojoMetadata<T> metadata) {
+        this.pojoMetadata = metadata;
+        return this;
+    }
+
+    /**
+     * Use custom field selector for advanced field selection.
+     * @param <T> record type
+     * @param selector field selector
+     * @return this writer for chaining
+     */
+    @SuppressWarnings("unchecked")
+    public <T> ParquetDatasetWriter select(FieldSelector<T> selector) {
+        this.fieldSelector = selector;
+        return this;
+    }
+
+    /**
      * Write Dataset to Parquet file.
      * @param <T> record type
      * @param dataset dataset to write
@@ -105,134 +220,156 @@ public class ParquetDatasetWriter {
         if (dataset.isEmpty()) {
             throw new IllegalArgumentException("Cannot write empty dataset");
         }
-        
+
         Class<?> recordClass = dataset.toList().get(0).getClass();
         if (!recordClass.isRecord()) {
             throw new IllegalArgumentException("Dataset must contain record types");
         }
-        
-        List<ColumnMetadata> columns = AnnotationProcessor.extractColumns(recordClass);
-        if (columns.isEmpty()) {
-            throw new IllegalArgumentException("Record must have @DataColumn annotations");
+
+        // Initialize metadata if not set
+        if (pojoMetadata == null) {
+            @SuppressWarnings("unchecked")
+            Class<Object> typedClass = (Class<Object>) recordClass;
+            pojoMetadata = MetadataCache.getMetadata(typedClass);
         }
-        
+
+        // Determine which fields to export
+        List<FieldMeta> fieldsToExport;
+        if (fieldSelector != null) {
+            fieldsToExport = fieldSelector.select();
+        } else if (selectedFields != null) {
+            fieldsToExport = selectedFields;
+        } else {
+            fieldsToExport = pojoMetadata.getExportableFields();
+        }
+
+        if (fieldsToExport.isEmpty()) {
+            throw new IllegalArgumentException("No fields selected for export. Ensure record has @DataColumn annotations.");
+        }
+
+        RecordComponent[] components = recordClass.getRecordComponents();
+
         try (RandomAccessFile raf = new RandomAccessFile(filePath.toFile(), "rw");
              FileChannel channel = raf.getChannel()) {
-            
-            // Create schema from record metadata
-            ParquetSchema schema = createSchema(columns);
-            
+
+            // Create schema from field metadata
+            ParquetSchema schema = createSchema(fieldsToExport);
+
             // Write magic number at start
             writeMagicNumber(channel);
-            
+
             // Write data in row groups
-            List<ParquetRowGroup> rowGroups = writeRowGroups(channel, dataset.toList(), schema, columns);
-            
+            List<ParquetRowGroup> rowGroups = writeRowGroups(channel, dataset.toList(), schema, fieldsToExport, components);
+
             // Write footer with metadata
             long footerOffset = channel.position();
             writeFooter(channel, schema, rowGroups);
-            
+
             // Write footer length and magic number at end
             writeFooterLength(channel, (int) (channel.position() - footerOffset));
             writeMagicNumber(channel);
         }
     }
-    
+
     // Private implementation methods
-    
-    private ParquetSchema createSchema(List<ColumnMetadata> columns) {
+
+    private ParquetSchema createSchema(List<FieldMeta> fields) {
         ParquetSchema schema = new ParquetSchema();
-        
-        for (ColumnMetadata columnMeta : columns) {
-            if (!columnMeta.isIgnored()) {
-                ParquetDataType dataType = ParquetDataType.fromJavaClass(columnMeta.getFieldType());
+
+        for (FieldMeta field : fields) {
+            if (!field.isIgnored()) {
+                ParquetDataType dataType = ParquetDataType.fromJavaClass(field.getFieldType());
                 ParquetColumn column = new ParquetColumn(
-                    columnMeta.getFieldName(),
+                    field.getFieldName(),
                     dataType,
-                    columnMeta.isRequired()
+                    field.isRequired()
                 );
                 schema.addColumn(column);
             }
         }
-        
+
         return schema;
     }
-    
+
     private void writeMagicNumber(FileChannel channel) throws IOException {
         ByteBuffer magic = ByteBuffer.wrap("PAR1".getBytes());
         channel.write(magic);
     }
-    
+
     private <T> List<ParquetRowGroup> writeRowGroups(FileChannel channel, List<T> records,
-                                                   ParquetSchema schema, List<ColumnMetadata> columns)
+                                                   ParquetSchema schema, List<FieldMeta> fields,
+                                                   RecordComponent[] components)
             throws IOException {
-        
+
         List<ParquetRowGroup> rowGroups = new ArrayList<>();
-        
+
         // Process records in chunks (row groups)
         for (int startIndex = 0; startIndex < records.size(); startIndex += rowGroupSize) {
             int endIndex = Math.min(startIndex + rowGroupSize, records.size());
             List<T> rowGroupRecords = records.subList(startIndex, endIndex);
-            
-            ParquetRowGroup rowGroup = writeRowGroup(channel, rowGroupRecords, schema, columns);
+
+            ParquetRowGroup rowGroup = writeRowGroup(channel, rowGroupRecords, schema, fields, components);
             rowGroups.add(rowGroup);
         }
-        
+
         return rowGroups;
     }
-    
+
     private <T> ParquetRowGroup writeRowGroup(FileChannel channel, List<T> records,
-                                            ParquetSchema schema, List<ColumnMetadata> columns)
+                                            ParquetSchema schema, List<FieldMeta> fields,
+                                            RecordComponent[] components)
             throws IOException {
-        
+
         long rowGroupStart = channel.position();
         List<ParquetColumnChunk> columnChunks = new ArrayList<>();
-        
+
         // Write each column as a separate chunk
         for (ParquetColumn schemaColumn : schema.getColumns()) {
-            ColumnMetadata columnMeta = findColumnMetadata(schemaColumn.getName(), columns);
-            if (columnMeta != null) {
-                ParquetColumnChunk chunk = writeColumnChunk(channel, records, schemaColumn, columnMeta);
+            RecordComponent component = findComponent(components, schemaColumn.getName());
+            if (component != null) {
+                ParquetColumnChunk chunk = writeColumnChunk(channel, records, schemaColumn, component);
                 columnChunks.add(chunk);
             }
         }
-        
+
         long totalSize = channel.position() - rowGroupStart;
-        
+
         return new ParquetRowGroup(columnChunks, records.size(), totalSize);
     }
-    
-    private ColumnMetadata findColumnMetadata(String fieldName, List<ColumnMetadata> columns) {
-        return columns.stream()
-            .filter(col -> col.getFieldName().equals(fieldName))
-            .findFirst()
-            .orElse(null);
+
+    private RecordComponent findComponent(RecordComponent[] components, String fieldName) {
+        for (RecordComponent component : components) {
+            if (component.getName().equals(fieldName)) {
+                return component;
+            }
+        }
+        return null;
     }
-    
+
     private <T> ParquetColumnChunk writeColumnChunk(FileChannel channel, List<T> records,
-                                                  ParquetColumn schemaColumn, ColumnMetadata columnMeta)
+                                                  ParquetColumn schemaColumn, RecordComponent component)
             throws IOException {
-        
+
         long chunkStart = channel.position();
-        
+
         // Extract column values from all records
-        List<Object> columnValues = extractColumnValues(records, columnMeta);
-        
+        List<Object> columnValues = extractColumnValues(records, component);
+
         // Encode values (simplified - real implementation would support multiple encodings)
         ByteBuffer encodedData = encodeColumnValues(columnValues, schemaColumn.getDataType());
-        
+
         // Compress if needed
         ByteBuffer compressedData = compress(encodedData, compressionCodec);
-        
+
         // Write page header (simplified)
         writePageHeader(channel, compressedData.remaining(), encodedData.remaining(), columnValues.size());
-        
+
         // Write compressed data
         channel.write(compressedData);
-        
+
         long chunkEnd = channel.position();
         int compressedSize = (int) (chunkEnd - chunkStart);
-        
+
         return new ParquetColumnChunk(
             schemaColumn.getName(),
             schemaColumn.getDataType(),
@@ -243,19 +380,19 @@ public class ParquetDatasetWriter {
             columnValues.size()
         );
     }
-    
-    private <T> List<Object> extractColumnValues(List<T> records, ColumnMetadata columnMeta) {
+
+    private <T> List<Object> extractColumnValues(List<T> records, RecordComponent component) {
         List<Object> values = new ArrayList<>();
-        
+
         for (T record : records) {
             try {
-                Object value = columnMeta.getRecordComponent().getAccessor().invoke(record);
+                Object value = component.getAccessor().invoke(record);
                 values.add(value);
             } catch (Exception e) {
-                values.add(null); // Handle extraction errors gracefully
+                values.add(null);
             }
         }
-        
+
         return values;
     }
     

@@ -2,6 +2,9 @@ package dataset4j.parquet;
 
 import dataset4j.Dataset;
 import dataset4j.annotations.DataColumn;
+import dataset4j.annotations.FieldSelector;
+import dataset4j.annotations.MetadataCache;
+import dataset4j.annotations.PojoMetadata;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -257,6 +260,92 @@ class ParquetSimpleTest {
         System.out.println("File size: " + parquetFile.toFile().length() + " bytes");
         System.out.println("Compression ratio: " + 
             String.format("%.2f%%", (1.0 - (double)parquetFile.toFile().length() / (records.size() * 100)) * 100));
+    }
+
+    @Test
+    void shouldWriteSelectedFieldsOnly() throws IOException {
+        // Given
+        Path parquetFile = tempDir.resolve("selected_fields.parquet");
+        Dataset<SimpleEmployee> data = Dataset.of(
+            new SimpleEmployee(1, "John Doe", "john@company.com", true,
+                new BigDecimal("75000.50"), LocalDate.of(1990, 5, 15)),
+            new SimpleEmployee(2, "Jane Smith", "jane@company.com", false,
+                new BigDecimal("82000.00"), LocalDate.of(1985, 10, 22))
+        );
+
+        PojoMetadata<SimpleEmployee> meta = MetadataCache.getMetadata(SimpleEmployee.class);
+
+        // When - Write only id and name fields
+        ParquetDatasetWriter
+            .toFile(parquetFile.toString())
+            .select(meta)
+            .fields("id", "name")
+            .withCompression(ParquetCompressionCodec.SNAPPY)
+            .write(data);
+
+        // Then - File should exist and be smaller than full export
+        assertTrue(parquetFile.toFile().exists());
+        assertTrue(parquetFile.toFile().length() > 0);
+
+        // Write full dataset for size comparison
+        Path fullFile = tempDir.resolve("full_fields.parquet");
+        ParquetDatasetWriter
+            .toFile(fullFile.toString())
+            .withCompression(ParquetCompressionCodec.SNAPPY)
+            .write(data);
+
+        System.out.println("Selected fields file size: " + parquetFile.toFile().length() + " bytes");
+        System.out.println("Full fields file size: " + fullFile.toFile().length() + " bytes");
+        assertTrue(parquetFile.toFile().length() <= fullFile.toFile().length(),
+            "Selected fields file should be smaller or equal to full file");
+    }
+
+    @Test
+    void shouldWriteWithExcludedFields() throws IOException {
+        // Given
+        Path parquetFile = tempDir.resolve("excluded_fields.parquet");
+        Dataset<SimpleEmployee> data = Dataset.of(
+            new SimpleEmployee(1, "John Doe", "john@company.com", true,
+                new BigDecimal("75000.50"), LocalDate.of(1990, 5, 15))
+        );
+
+        PojoMetadata<SimpleEmployee> meta = MetadataCache.getMetadata(SimpleEmployee.class);
+
+        // When - Write excluding email and salary
+        ParquetDatasetWriter
+            .toFile(parquetFile.toString())
+            .select(meta)
+            .exclude("email", "salary")
+            .withCompression(ParquetCompressionCodec.SNAPPY)
+            .write(data);
+
+        // Then
+        assertTrue(parquetFile.toFile().exists());
+        assertTrue(parquetFile.toFile().length() > 0);
+    }
+
+    @Test
+    void shouldWriteWithFieldSelector() throws IOException {
+        // Given
+        Path parquetFile = tempDir.resolve("selector_fields.parquet");
+        Dataset<SimpleEmployee> data = Dataset.of(
+            new SimpleEmployee(1, "John Doe", "john@company.com", true,
+                new BigDecimal("75000.50"), LocalDate.of(1990, 5, 15))
+        );
+
+        FieldSelector<SimpleEmployee> selector = FieldSelector.from(SimpleEmployee.class)
+            .requiredOnly();
+
+        // When - Write only required fields
+        ParquetDatasetWriter
+            .toFile(parquetFile.toString())
+            .select(selector)
+            .withCompression(ParquetCompressionCodec.SNAPPY)
+            .write(data);
+
+        // Then
+        assertTrue(parquetFile.toFile().exists());
+        assertTrue(parquetFile.toFile().length() > 0);
     }
 
     @Test
