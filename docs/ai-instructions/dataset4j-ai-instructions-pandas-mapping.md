@@ -193,7 +193,7 @@ Dataset<Person> noNulls = dataset.dropNull(Person::city);
 | `df.drop(columns=[...])` | — (use `map` to exclude fields) | Partial |
 | `df['new_col'] = expr` | Map to new record type with additional field | Partial |
 | `df.rename(columns={})` | Create new record type with renamed field | Partial |
-| `df.reset_index()` | — | Not Available |
+| `df.reset_index()` | `ds.mapIndexed((i, row) -> ...)` | Available |
 
 ### Example: Column Extraction
 
@@ -491,8 +491,8 @@ dataset.map(p -> new Person(p.name().toLowerCase(), p.age(), p.city().strip()));
 
 | Pandas | Dataset4J | Status |
 |--------|-----------|--------|
-| `print(df)` / `df.head()` | `ds.toString()` (shows first 10 rows) | Available |
-| `df.to_string()` | `ds.toString()` | Available |
+| `print(df)` / `df.head()` | `ds.print()` / `ds.print(maxRows)` | Available |
+| `df.to_string()` | `ds.toTabularString()` / `ds.toTabularString(maxRows)` | Available |
 | `df.to_csv()` | `CsvDatasetWriter.toFile("f.csv").write(ds)` | Available |
 | `df.to_excel()` | `ExcelDatasetWriter.toFile("f.xlsx").write(ds)` | Available |
 | `df.to_parquet()` | `ParquetDatasetWriter.toFile("f.parquet").write(ds)` | Available |

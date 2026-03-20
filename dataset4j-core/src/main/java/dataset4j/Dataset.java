@@ -1,5 +1,6 @@
 package dataset4j;
 
+import java.lang.reflect.RecordComponent;
 import java.util.*;
 import java.util.function.*;
 import java.util.stream.*;
@@ -225,6 +226,15 @@ public class Dataset<T> implements Iterable<T> {
     /** df.assign(...) / df.apply(fn, axis=1) — transform each row */
     public <R> Dataset<R> map(Function<T, R> mapper) {
         return new Dataset<>(rows.stream().map(mapper).toList());
+    }
+
+    /** df.reset_index() / df.assign(row_num=...) — map with row index (0-based) */
+    public <R> Dataset<R> mapIndexed(BiFunction<Integer, T, R> mapper) {
+        List<R> result = new ArrayList<>(rows.size());
+        for (int i = 0; i < rows.size(); i++) {
+            result.add(mapper.apply(i, rows.get(i)));
+        }
+        return new Dataset<>(result);
     }
 
     /** Explode / melt — one row becomes many */
@@ -791,21 +801,192 @@ public class Dataset<T> implements Iterable<T> {
     }
 
     // ---------------------------------------------------------------
-    // toString
+    // Display / print  (print(df), df.to_string())
     // ---------------------------------------------------------------
+
+    /** Print tabular representation to stdout (like pandas print(df)). */
+    public void print() {
+        System.out.println(toTabularString());
+    }
+
+    /** Print tabular representation to stdout with custom row limit. */
+    public void print(int maxRows) {
+        System.out.println(toTabularString(maxRows));
+    }
+
+    /** Return pandas-style tabular string with default row limit (20). */
+    public String toTabularString() {
+        return toTabularString(20);
+    }
+
+    /** Return pandas-style tabular string with custom row limit. */
+    public String toTabularString(int maxRows) {
+        if (rows.isEmpty()) return "Empty Dataset";
+        return buildTabularString(maxRows);
+    }
 
     @Override
     public String toString() {
-        if (rows.isEmpty()) return "Dataset(empty)";
-        StringBuilder sb = new StringBuilder("Dataset(size=").append(rows.size()).append(")\n");
-        int limit = Math.min(rows.size(), 10);
-        for (int i = 0; i < limit; i++) {
-            sb.append("  ").append(rows.get(i)).append('\n');
+        return toTabularString();
+    }
+
+    private String buildTabularString(int maxRows) {
+        T first = rows.get(0);
+        Class<?> clazz = first.getClass();
+
+        // Extract column names and accessors
+        String[] headers;
+        java.util.function.Function<Object, String>[] accessors;
+
+        if (clazz.isRecord()) {
+            RecordComponent[] components = clazz.getRecordComponents();
+            headers = new String[components.length];
+            accessors = new java.util.function.Function[components.length];
+            for (int c = 0; c < components.length; c++) {
+                headers[c] = getColumnDisplayName(components[c]);
+                final var accessor = components[c].getAccessor();
+                accessors[c] = row -> {
+                    try { Object v = accessor.invoke(row); return v == null ? "" : v.toString(); }
+                    catch (Exception e) { return "?"; }
+                };
+            }
+        } else {
+            // Non-record: single column with toString
+            headers = new String[]{"value"};
+            accessors = new java.util.function.Function[]{Object::toString};
         }
-        if (rows.size() > 10) {
-            sb.append("  ... ").append(rows.size() - 10).append(" more rows\n");
+
+        int numCols = headers.length;
+        int totalRows = rows.size();
+        boolean truncated = totalRows > maxRows;
+        int headCount = truncated ? maxRows / 2 : totalRows;
+        int tailCount = truncated ? maxRows - headCount : 0;
+
+        // Collect display rows (head + tail)
+        List<int[]> displayIndices = new ArrayList<>(); // original index
+        List<String[]> displayValues = new ArrayList<>();
+        for (int i = 0; i < headCount; i++) {
+            displayIndices.add(new int[]{i});
+            displayValues.add(extractRow(rows.get(i), accessors));
         }
+        if (truncated) {
+            int tailStart = totalRows - tailCount;
+            for (int i = tailStart; i < totalRows; i++) {
+                displayIndices.add(new int[]{i});
+                displayValues.add(extractRow(rows.get(i), accessors));
+            }
+        }
+
+        // Compute column widths
+        int indexWidth = String.valueOf(totalRows - 1).length();
+        int[] colWidths = new int[numCols];
+        boolean[] numeric = new boolean[numCols];
+        for (int c = 0; c < numCols; c++) {
+            colWidths[c] = headers[c].length();
+            numeric[c] = isNumericColumn(clazz, c);
+        }
+        for (String[] vals : displayValues) {
+            for (int c = 0; c < numCols; c++) {
+                colWidths[c] = Math.max(colWidths[c], vals[c].length());
+            }
+        }
+        // Ellipsis row widths
+        if (truncated) {
+            indexWidth = Math.max(indexWidth, 3); // "..."
+            for (int c = 0; c < numCols; c++) {
+                colWidths[c] = Math.max(colWidths[c], 3);
+            }
+        }
+
+        // Build output
+        StringBuilder sb = new StringBuilder();
+
+        // Header row
+        sb.append(pad("", indexWidth, false));
+        for (int c = 0; c < numCols; c++) {
+            sb.append("  ").append(pad(headers[c], colWidths[c], numeric[c]));
+        }
+        sb.append('\n');
+
+        // Data rows (head)
+        for (int r = 0; r < headCount; r++) {
+            String idx = String.valueOf(displayIndices.get(r)[0]);
+            sb.append(pad(idx, indexWidth, true));
+            String[] vals = displayValues.get(r);
+            for (int c = 0; c < numCols; c++) {
+                sb.append("  ").append(pad(vals[c], colWidths[c], numeric[c]));
+            }
+            sb.append('\n');
+        }
+
+        // Ellipsis row
+        if (truncated) {
+            sb.append(pad("...", indexWidth, false));
+            for (int c = 0; c < numCols; c++) {
+                sb.append("  ").append(pad("...", colWidths[c], numeric[c]));
+            }
+            sb.append('\n');
+
+            // Tail rows
+            for (int r = headCount; r < displayValues.size(); r++) {
+                String idx = String.valueOf(displayIndices.get(r)[0]);
+                sb.append(pad(idx, indexWidth, true));
+                String[] vals = displayValues.get(r);
+                for (int c = 0; c < numCols; c++) {
+                    sb.append("  ").append(pad(vals[c], colWidths[c], numeric[c]));
+                }
+                sb.append('\n');
+            }
+        }
+
+        // Footer
+        sb.append('\n').append('[').append(totalRows).append(" rows x ").append(numCols).append(" columns]");
         return sb.toString();
+    }
+
+    private String[] extractRow(T row, java.util.function.Function<Object, String>[] accessors) {
+        String[] vals = new String[accessors.length];
+        for (int c = 0; c < accessors.length; c++) {
+            vals[c] = accessors[c].apply(row);
+        }
+        return vals;
+    }
+
+    private static String getColumnDisplayName(RecordComponent component) {
+        try {
+            var annotation = component.getAnnotation(
+                (Class<? extends java.lang.annotation.Annotation>)
+                    Class.forName("dataset4j.annotations.DataColumn"));
+            if (annotation != null) {
+                String name = (String) annotation.annotationType().getMethod("name").invoke(annotation);
+                if (name != null && !name.isEmpty()) return name;
+            }
+        } catch (Exception ignored) {
+            // DataColumn not on classpath or not annotated — use field name
+        }
+        return component.getName();
+    }
+
+    private static boolean isNumericColumn(Class<?> clazz, int colIndex) {
+        if (!clazz.isRecord()) return false;
+        RecordComponent[] components = clazz.getRecordComponents();
+        if (colIndex >= components.length) return false;
+        Class<?> type = components[colIndex].getType();
+        return type == int.class || type == Integer.class
+            || type == long.class || type == Long.class
+            || type == double.class || type == Double.class
+            || type == float.class || type == Float.class
+            || type == java.math.BigDecimal.class;
+    }
+
+    private static String pad(String value, int width, boolean rightAlign) {
+        if (value.length() >= width) return value;
+        int padding = width - value.length();
+        if (rightAlign) {
+            return " ".repeat(padding) + value;
+        } else {
+            return value + " ".repeat(padding);
+        }
     }
 
     // ===============================================================

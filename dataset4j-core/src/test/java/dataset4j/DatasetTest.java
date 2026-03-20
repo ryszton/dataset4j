@@ -218,6 +218,32 @@ class DatasetTest {
                 new Tag(e.name(), "tag1"), new Tag(e.name(), "tag2")));
             assertEquals(4, result.size());
         }
+
+        @Test void mapIndexed() {
+            record Numbered(int rowNum, String name) {}
+            var result = EMPLOYEES.mapIndexed((i, e) -> new Numbered(i, e.name()));
+            assertEquals(5, result.size());
+            assertEquals(0, result.get(0).rowNum());
+            assertEquals("Alice", result.get(0).name());
+            assertEquals(4, result.get(4).rowNum());
+            assertEquals("Eve", result.get(4).name());
+        }
+
+        @Test void mapIndexedEmpty() {
+            record Numbered(int rowNum, String name) {}
+            var result = Dataset.<Employee>empty().mapIndexed((i, e) -> new Numbered(i, e.name()));
+            assertTrue(result.isEmpty());
+        }
+
+        @Test void mapIndexedChained() {
+            record Ranked(int rank, String name) {}
+            var result = EMPLOYEES
+                .sortBy(Employee::name)
+                .mapIndexed((i, e) -> new Ranked(i + 1, e.name()));
+            assertEquals(1, result.get(0).rank());
+            assertEquals("Alice", result.get(0).name());
+            assertEquals(5, result.get(4).rank());
+        }
     }
 
     // -----------------------------------------------------------------
@@ -1223,13 +1249,52 @@ class DatasetTest {
     // toString
     // -----------------------------------------------------------------
 
-    @Test void toStringSmall() {
-        var s = EMPLOYEES.head(2).toString();
-        assertTrue(s.contains("size=2"));
-        assertTrue(s.contains("Alice"));
-    }
+    @Nested class TabularDisplay {
+        @Test void toStringTabular() {
+            var s = EMPLOYEES.head(2).toString();
+            assertTrue(s.contains("name"), "Should contain header 'name'");
+            assertTrue(s.contains("Alice"), "Should contain value 'Alice'");
+            assertTrue(s.contains("[2 rows x 3 columns]"), "Should contain footer");
+        }
 
-    @Test void toStringEmpty() {
-        assertEquals("Dataset(empty)", Dataset.empty().toString());
+        @Test void toStringEmpty() {
+            assertEquals("Empty Dataset", Dataset.empty().toString());
+        }
+
+        @Test void toTabularStringAligned() {
+            record Item(String name, int price) {}
+            var ds = Dataset.of(new Item("Apple", 3), new Item("Banana", 12));
+            var s = ds.toTabularString();
+            assertTrue(s.contains("name"), "Should have header");
+            assertTrue(s.contains("price"), "Should have header");
+            assertTrue(s.contains("Apple"), "Should have value");
+            assertTrue(s.contains("[2 rows x 2 columns]"), "Should have footer");
+            // Numeric column should be right-aligned (price 3 padded)
+            assertTrue(s.contains(" 3"), "Numeric should be right-aligned");
+        }
+
+        @Test void toTabularStringTruncated() {
+            record Row(int id) {}
+            var rows = new java.util.ArrayList<Row>();
+            for (int i = 0; i < 100; i++) rows.add(new Row(i));
+            var ds = Dataset.of(rows);
+            var s = ds.toTabularString(10);
+            assertTrue(s.contains("..."), "Should have ellipsis for truncated rows");
+            assertTrue(s.contains("[100 rows x 1 columns]"), "Should show total count");
+            assertTrue(s.contains("0"), "Should show first row");
+            assertTrue(s.contains("99"), "Should show last row");
+        }
+
+        @Test void printDoesNotThrow() {
+            assertDoesNotThrow(() -> EMPLOYEES.print());
+            assertDoesNotThrow(() -> EMPLOYEES.print(3));
+        }
+
+        @Test void nonRecordDataset() {
+            var ds = Dataset.of("hello", "world");
+            var s = ds.toTabularString();
+            assertTrue(s.contains("hello"));
+            assertTrue(s.contains("[2 rows x 1 columns]"));
+        }
     }
 }
