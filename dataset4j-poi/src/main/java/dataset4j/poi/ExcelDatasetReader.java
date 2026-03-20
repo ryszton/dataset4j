@@ -1,6 +1,7 @@
 package dataset4j.poi;
 
 import dataset4j.Dataset;
+import dataset4j.DatasetReadException;
 import dataset4j.annotations.AnnotationProcessor;
 import dataset4j.annotations.ColumnMetadata;
 import org.apache.poi.ss.usermodel.*;
@@ -14,11 +15,16 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Reads Excel files into Dataset using annotation-driven mapping.
- * 
+ *
+ * <p>Columns can be mapped by position ({@code order}) or by header name ({@code name}).
+ * When {@code order} is not specified, the reader matches columns by header name.
+ *
  * Example usage:
  * {@code
  * Dataset<Employee> employees = ExcelDatasetReader
@@ -28,16 +34,16 @@ import java.util.List;
  * }
  */
 public class ExcelDatasetReader {
-    
+
     private final String filePath;
     private String sheetName;
     private boolean hasHeaders = true;
     private int startRow = 0;
-    
+
     private ExcelDatasetReader(String filePath) {
         this.filePath = filePath;
     }
-    
+
     /**
      * Create reader for Excel file.
      * @param filePath path to Excel file
@@ -51,7 +57,7 @@ public class ExcelDatasetReader {
         }
         return new ExcelDatasetReader(filePath);
     }
-    
+
     /**
      * Specify sheet name to read from.
      * @param sheetName name of the sheet
@@ -61,7 +67,7 @@ public class ExcelDatasetReader {
         this.sheetName = sheetName;
         return this;
     }
-    
+
     /**
      * Specify whether first row contains headers.
      * @param hasHeaders true if first row has headers
@@ -71,7 +77,7 @@ public class ExcelDatasetReader {
         this.hasHeaders = hasHeaders;
         return this;
     }
-    
+
     /**
      * Alias for headers() method.
      * @param hasHeaders true if first row has headers
@@ -80,7 +86,7 @@ public class ExcelDatasetReader {
     public ExcelDatasetReader hasHeaders(boolean hasHeaders) {
         return headers(hasHeaders);
     }
-    
+
     /**
      * Specify starting row index (0-based).
      * @param startRow row index to start reading from
@@ -90,7 +96,7 @@ public class ExcelDatasetReader {
         this.startRow = startRow;
         return this;
     }
-    
+
     /**
      * Read Excel data into Dataset of specified record type.
      * @param <T> record type
@@ -101,7 +107,7 @@ public class ExcelDatasetReader {
     public <T> Dataset<T> read(Class<T> recordClass) throws IOException {
         return readAs(recordClass);
     }
-    
+
     /**
      * Read Excel data into Dataset of specified record type.
      * @param <T> record type
@@ -113,39 +119,65 @@ public class ExcelDatasetReader {
         if (!recordClass.isRecord()) {
             throw new IllegalArgumentException("Class must be a record: " + recordClass.getName());
         }
-        
+
         List<ColumnMetadata> columns = AnnotationProcessor.extractColumns(recordClass);
         if (columns.isEmpty()) {
             throw new IllegalArgumentException("Record must have @DataColumn annotations");
         }
-        
+
         try (FileInputStream fis = new FileInputStream(new File(filePath));
              Workbook workbook = new XSSFWorkbook(fis)) {
-            
+
             Sheet sheet = sheetName != null ? workbook.getSheet(sheetName) : workbook.getSheetAt(0);
             if (sheet == null) {
                 throw new IllegalArgumentException("Sheet not found: " + sheetName);
             }
-            
+
+            String resolvedSheetName = sheet.getSheetName();
+
+            // Build header index map for name-based column matching
+            Map<String, Integer> headerIndex = buildHeaderIndex(sheet);
+
             List<T> records = new ArrayList<>();
             int dataStartRow = hasHeaders ? startRow + 1 : startRow;
-            
+
             for (int rowIndex = dataStartRow; rowIndex <= sheet.getLastRowNum(); rowIndex++) {
                 Row row = sheet.getRow(rowIndex);
                 if (row == null || isRowEmpty(row)) {
                     continue;
                 }
-                
-                T record = parseRowToRecord(row, recordClass, columns);
+
+                T record = parseRowToRecord(row, rowIndex, recordClass, columns, headerIndex, resolvedSheetName);
                 if (record != null) {
                     records.add(record);
                 }
             }
-            
+
             return Dataset.of(records);
         }
     }
-    
+
+    private Map<String, Integer> buildHeaderIndex(Sheet sheet) {
+        Map<String, Integer> index = new LinkedHashMap<>();
+        if (!hasHeaders) {
+            return index;
+        }
+        Row headerRow = sheet.getRow(startRow);
+        if (headerRow == null) {
+            return index;
+        }
+        for (int i = headerRow.getFirstCellNum(); i < headerRow.getLastCellNum(); i++) {
+            Cell cell = headerRow.getCell(i);
+            if (cell != null) {
+                String value = getCellValueAsString(cell).trim();
+                if (!value.isEmpty()) {
+                    index.put(value, i);
+                }
+            }
+        }
+        return index;
+    }
+
     private boolean isRowEmpty(Row row) {
         for (int i = row.getFirstCellNum(); i < row.getLastCellNum(); i++) {
             Cell cell = row.getCell(i);
@@ -158,59 +190,108 @@ public class ExcelDatasetReader {
         }
         return true;
     }
-    
-    private <T> T parseRowToRecord(Row row, Class<T> recordClass, List<ColumnMetadata> columns) {
+
+    private <T> T parseRowToRecord(Row row, int rowIndex, Class<T> recordClass,
+                                    List<ColumnMetadata> columns, Map<String, Integer> headerIndex,
+                                    String resolvedSheetName) {
         try {
             RecordComponent[] components = recordClass.getRecordComponents();
             Object[] values = new Object[components.length];
-            
+
             for (int i = 0; i < components.length; i++) {
                 RecordComponent component = components[i];
                 ColumnMetadata columnMeta = findColumnForComponent(component, columns);
-                
+
                 if (columnMeta != null && !columnMeta.isIgnored()) {
-                    int colIndex = getColumnIndex(columnMeta);
+                    int colIndex = resolveColumnIndex(columnMeta, headerIndex);
+                    if (colIndex < 0) {
+                        values[i] = getDefaultValue(component.getType());
+                        continue;
+                    }
                     Cell cell = row.getCell(colIndex);
-                    values[i] = parseCellValue(cell, component.getType(), columnMeta);
+                    try {
+                        values[i] = parseCellValue(cell, component.getType(), columnMeta);
+                    } catch (Exception e) {
+                        String rawValue = cell != null ? getCellValueAsString(cell) : null;
+                        throw DatasetReadException.builder()
+                            .row(rowIndex)
+                            .column(colIndex)
+                            .sheetName(resolvedSheetName)
+                            .fieldName(columnMeta.getFieldName())
+                            .recordClass(recordClass)
+                            .rawValue(rawValue)
+                            .fieldTypeName(component.getType().getSimpleName())
+                            .parseMessage(e.getMessage())
+                            .cause(e)
+                            .build();
+                    }
                 } else {
                     values[i] = getDefaultValue(component.getType());
                 }
             }
-            
+
             return recordClass.getDeclaredConstructor(
                 java.util.Arrays.stream(components)
                     .map(RecordComponent::getType)
                     .toArray(Class[]::new)
             ).newInstance(values);
-            
+
+        } catch (DatasetReadException e) {
+            throw e;
         } catch (Exception e) {
-            throw new RuntimeException("Failed to create record from row", e);
+            throw new DatasetReadException.Builder()
+                .row(rowIndex)
+                .sheetName(resolvedSheetName)
+                .recordClass(recordClass)
+                .parseMessage("Failed to create record from row: " + e.getMessage())
+                .cause(e)
+                .build();
         }
     }
-    
+
+    /**
+     * Resolve column index: use explicit order if set, otherwise match by header name.
+     */
+    private int resolveColumnIndex(ColumnMetadata columnMeta, Map<String, Integer> headerIndex) {
+        // If order is explicitly set, use it (1-based to 0-based)
+        if (columnMeta.getOrder() > 0) {
+            return columnMeta.getOrder() - 1;
+        }
+
+        // Otherwise, match by effective column name against headers
+        String effectiveName = columnMeta.getEffectiveColumnName();
+        Integer idx = headerIndex.get(effectiveName);
+        if (idx != null) {
+            return idx;
+        }
+
+        // Case-insensitive fallback
+        for (Map.Entry<String, Integer> entry : headerIndex.entrySet()) {
+            if (entry.getKey().equalsIgnoreCase(effectiveName)) {
+                return entry.getValue();
+            }
+        }
+
+        return -1; // column not found — will use default value
+    }
+
     private ColumnMetadata findColumnForComponent(RecordComponent component, List<ColumnMetadata> columns) {
         return columns.stream()
             .filter(col -> col.getFieldName().equals(component.getName()))
             .findFirst()
             .orElse(null);
     }
-    
-    private int getColumnIndex(ColumnMetadata columnMeta) {
-        // Convert 1-based @DataColumn order to 0-based Excel column index
-        // Excel columns are 0-based (A=0, B=1, C=2, etc.) but @DataColumn order is 1-based
-        return columnMeta.getOrder() > 0 ? columnMeta.getOrder() - 1 : 0;
-    }
-    
+
     private Object parseCellValue(Cell cell, Class<?> targetType, ColumnMetadata columnMeta) {
         if (cell == null || cell.getCellType() == CellType.BLANK) {
             return getDefaultValue(targetType);
         }
-        
+
         String cellValue = getCellValueAsString(cell);
         if (cellValue.trim().isEmpty()) {
             return getDefaultValue(targetType);
         }
-        
+
         // Use FormatProvider for parsing if available
         try {
             Object result = dataset4j.annotations.FormatProvider.parseValue(cellValue, columnMeta);
@@ -224,7 +305,7 @@ public class ExcelDatasetReader {
             return parseBasicValue(cellValue, targetType);
         }
     }
-    
+
     private String getCellValueAsString(Cell cell) {
         return switch (cell.getCellType()) {
             case STRING -> cell.getStringCellValue();
@@ -258,7 +339,7 @@ public class ExcelDatasetReader {
             default -> "";
         };
     }
-    
+
     private Object parseBasicValue(String value, Class<?> type) {
         if (type == String.class) return value;
         if (type == int.class || type == Integer.class) return Integer.parseInt(value);
@@ -278,14 +359,14 @@ public class ExcelDatasetReader {
                     // Use POI's utility to convert Excel serial date to LocalDate
                     java.util.Date date = org.apache.poi.ss.usermodel.DateUtil.getJavaDate(serialDate);
                     LocalDate localDate = date.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate();
-                    
+
                     // Workaround for Excel 1900 leap year bug
                     // Excel incorrectly treats 1900 as a leap year, which shifts dates
                     // For dates on or before 1900-02-28, we need to add one day
                     if (serialDate <= 60) { // 60 is March 1, 1900 in Excel
                         localDate = localDate.plusDays(1);
                     }
-                    
+
                     return localDate;
                 } catch (Exception ex) {
                     throw new IllegalArgumentException("Could not parse date: " + value, ex);
@@ -297,7 +378,7 @@ public class ExcelDatasetReader {
         }
         return value;
     }
-    
+
     private Object getDefaultValue(Class<?> type) {
         if (type == String.class) return "";
         if (type == int.class) return 0;

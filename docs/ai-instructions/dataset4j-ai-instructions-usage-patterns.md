@@ -124,12 +124,22 @@ List<FieldMeta> allColumns = FieldSelector.from(metadata)
 ### Reading Excel Files
 
 ```java
-// Basic Excel reading
+// Basic Excel reading (columns matched by @DataColumn order)
 Dataset<Employee> employees = ExcelDatasetReader
     .fromFile("employees.xlsx")
     .sheet("Employee Data")
     .hasHeaders(true)
     .read(Employee.class);
+
+// Name-based matching — no order needed, columns can be in any order in the file
+public record Employee(
+    @DataColumn(name = "Employee ID") String id,
+    @DataColumn(name = "Full Name") String name
+) {}
+
+Dataset<Employee> employees = ExcelDatasetReader
+    .fromFile("employees.xlsx")
+    .readAs(Employee.class);
 
 // Excel reading with configuration
 Dataset<Employee> employees = ExcelDatasetReader
@@ -378,12 +388,17 @@ public Dataset<Employee> readEmployeesFromExcel(String filePath) {
             .sheet("Employees")
             .hasHeaders(true)
             .read(Employee.class);
+    } catch (DatasetReadException e) {
+        // Rich error with cell coordinates and Java field name
+        System.err.printf("Error at %s: field %s, value '%s'%n",
+            e.getCellReference(),       // e.g. "Sheet1!B5"
+            e.getQualifiedFieldName(),  // e.g. "Employee.hireDate"
+            e.getRawValue());
+        throw e;
     } catch (SecurityException e) {
         throw new IllegalArgumentException("Invalid file path: " + e.getMessage(), e);
     } catch (IOException e) {
         throw new RuntimeException("Failed to read Excel file: " + e.getMessage(), e);
-    } catch (Exception e) {
-        throw new RuntimeException("Unexpected error reading employee data: " + e.getMessage(), e);
     }
 }
 

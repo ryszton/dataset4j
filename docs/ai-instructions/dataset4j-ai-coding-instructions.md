@@ -14,10 +14,11 @@ Dataset4J is a modular Java library that brings **pandas-like DataFrame operatio
 ```java
 @GenerateFields(className = "Fields", columnsClassName = "Cols")
 public record Employee(
-    @DataColumn(name = "Employee ID", order = 1, required = true) String id,
-    @DataColumn(name = "Full Name", order = 2) String fullName,
-    @DataColumn(name = "Email", order = 3) String email
+    @DataColumn(name = "Employee ID", required = true) String id,
+    @DataColumn(name = "Full Name") String fullName,
+    @DataColumn(name = "Email") String email
 ) {}
+// Note: order is optional — when omitted, columns are matched by header name
 
 // Pandas-like operations with type safety
 Dataset<Employee> engineers = employees

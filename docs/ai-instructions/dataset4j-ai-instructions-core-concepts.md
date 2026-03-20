@@ -96,8 +96,8 @@ Field-level metadata:
 
 ```java
 @DataColumn(
-    name = "Column Display Name",           // Column header text
-    order = 1,                             // Sort/display order
+    name = "Column Display Name",           // Column header text (used for header matching when order is omitted)
+    order = 1,                             // Sort/display order (optional — when omitted, columns are matched by name)
     required = true,                       // Validation flag
     width = 20,                           // Excel column width
     cellType = DataColumn.CellType.TEXT,   // Cell formatting hint
@@ -105,6 +105,16 @@ Field-level metadata:
     dateFormat = "yyyy-MM-dd",            // Date formatting pattern
     ignore = false                        // Exclude from exports
 )
+
+// Minimal annotation — matched by header name (case-insensitive)
+@DataColumn(name = "Employee ID") String id
+// Or even simpler — matched by Java field name as header
+@DataColumn String id
+```
+
+#### Name-Based Column Matching
+
+When `order` is not specified, the Excel reader matches columns by comparing the `name` attribute (or the Java field name if `name` is empty) against the header row. Matching is case-insensitive.
 ```
 
 ## 3. Compile-Time Field Constants Generation

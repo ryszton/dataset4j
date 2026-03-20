@@ -11,7 +11,7 @@ A modular, lightweight DataFrame-like library for Java records. Port your pandas
 <dependency>
     <groupId>io.github.amah</groupId>
     <artifactId>dataset4j</artifactId>
-    <version>1.0.8</version>
+    <version>1.0.9</version>
 </dependency>
 ```
 
@@ -21,21 +21,21 @@ A modular, lightweight DataFrame-like library for Java records. Port your pandas
 <dependency>
     <groupId>io.github.amah</groupId>
     <artifactId>dataset4j-core</artifactId>
-    <version>1.0.8</version>
+    <version>1.0.9</version>
 </dependency>
 
 <!-- Add Excel/CSV support -->
 <dependency>
     <groupId>io.github.amah</groupId>
     <artifactId>dataset4j-poi</artifactId>
-    <version>1.0.8</version>
+    <version>1.0.9</version>
 </dependency>
 
 <!-- Add Parquet support (lightweight, no Hadoop) -->
 <dependency>
     <groupId>io.github.amah</groupId>
     <artifactId>dataset4j-parquet</artifactId>
-    <version>1.0.8</version>
+    <version>1.0.9</version>
 </dependency>
 ```
 
@@ -181,6 +181,17 @@ employees.innerJoinOn(departments,
     on(Department::dept, Department::location));
 ```
 
+**Typed accessors** for retrieving components:
+
+```java
+CompositeKey key = CompositeKey.of("Engineering", 42, LocalDate.of(2024, 1, 1));
+String dept = key.asString(0);         // "Engineering"
+Integer count = key.asInteger(1);      // 42
+LocalDate date = key.asLocalDate(2);   // 2024-01-01
+// Also: asLong(), asDouble(), asBoolean(), asLocalTime(), asLocalDateTime()
+// Generic: key.as(0, MyType.class)
+```
+
 ### GroupedDataset\<K, T\> — GroupBy Result
 
 Returned by `groupBy()`, provides aggregation methods (`counts()`, `sumInt()`, `meanInt()`, `aggregate()`) and group iteration.
@@ -220,6 +231,56 @@ Dataset4J ships with comprehensive AI coding assistant instructions in [`docs/ai
 **Usage**: Copy the relevant instruction files into your AI assistant's context, or reference them in your project's `.cursorrules`, `CLAUDE.md`, or similar configuration.
 
 ## 🔧 **Advanced Features**
+
+### Name-Based Column Matching (Excel Reader)
+
+The `order` attribute in `@DataColumn` is now optional. When omitted, columns are matched by header name:
+
+```java
+// No order needed — matched by header name
+public record Employee(
+    @DataColumn(name = "Employee ID") String id,
+    @DataColumn(name = "Full Name") String name,
+    @DataColumn(name = "Hire Date", dateFormat = "yyyy-MM-dd") LocalDate hireDate
+) {}
+
+// Columns can appear in any order in the file
+Dataset<Employee> employees = ExcelDatasetReader
+    .fromFile("employees.xlsx")
+    .readAs(Employee.class);
+```
+
+Matching is case-insensitive. If neither `order` nor a matching header is found, the field receives its default value.
+
+### Rich Error Reporting (DatasetReadException)
+
+Parse errors now include the exact cell coordinate, sheet name, and Java field name:
+
+```java
+try {
+    ExcelDatasetReader.fromFile("data.xlsx").readAs(Employee.class);
+} catch (DatasetReadException e) {
+    e.getCellReference();       // "Sheet1!C5"
+    e.getRow();                 // 4 (0-based)
+    e.getColumn();              // 2 (0-based)
+    e.getSheetName();           // "Sheet1"
+    e.getFieldName();           // "hireDate"
+    e.getQualifiedFieldName();  // "Employee.hireDate"
+    e.getRawValue();            // "not-a-date"
+    // Message: Failed to parse value 'not-a-date' for field 'hireDate'
+    //          (java: Employee.hireDate) of type LocalDate at Sheet1!C5 (row 4, column 2)
+}
+```
+
+### Varargs distinctBy
+
+Deduplicate on any number of keys:
+
+```java
+dataset.distinctBy(Row::a, Row::b, Row::c, Row::d, Row::e);
+```
+
+The typed overloads for 1-3 keys remain for better type safety.
 
 ### Generated Field Constants
 ```java
@@ -286,4 +347,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Dataset4J v1.0.6** - Bringing pandas-like data processing to Java with type safety and performance.
+**Dataset4J v1.0.9** - Bringing pandas-like data processing to Java with type safety and performance.

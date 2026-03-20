@@ -198,15 +198,19 @@ public Dataset<Employee> readEmployeeData(String filePath) {
             .sheet("Employees")
             .hasHeaders(true)
             .read(Employee.class);
+    } catch (DatasetReadException e) {
+        // Rich error context with cell coordinates
+        System.err.printf("Parse error at %s for field %s: %s%n",
+            e.getCellReference(),           // e.g. "Sheet1!C5"
+            e.getQualifiedFieldName(),      // e.g. "Employee.hireDate"
+            e.getRawValue());
+        throw e;
     } catch (SecurityException e) {
         // Path traversal or security issue
         throw new IllegalArgumentException("Invalid file path: " + e.getMessage(), e);
     } catch (IOException e) {
         // File reading error
         throw new RuntimeException("Failed to read file '" + filePath + "': " + e.getMessage(), e);
-    } catch (RuntimeException e) {
-        // Data parsing or validation error
-        throw new RuntimeException("Failed to parse employee data: " + e.getMessage(), e);
     }
 }
 

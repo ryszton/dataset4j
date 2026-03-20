@@ -279,6 +279,7 @@ Dataset<PersonWithDouble> withDoubled = dataset
 | `df.drop_duplicates(subset=[col])` | `ds.distinctBy(field)` | Available |
 | `df.drop_duplicates(subset=[c1, c2])` | `ds.distinctBy(field1, field2)` | Available |
 | `df.drop_duplicates(subset=[c1, c2, c3])` | `ds.distinctBy(field1, field2, field3)` | Available |
+| `df.drop_duplicates(subset=[c1, ..., cN])` | `ds.distinctBy(field1, ..., fieldN)` (varargs) | Available |
 | `df.drop_duplicates()` | `ds.distinct()` | Available |
 | `df.duplicated()` | — | Not Available |
 

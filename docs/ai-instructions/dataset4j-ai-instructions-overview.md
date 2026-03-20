@@ -30,6 +30,7 @@ The library includes built-in security measures:
 - ✅ File size limits to prevent DoS attacks
 - ✅ Thread-safe operations throughout
 - ✅ Input validation on format strings
+- ✅ Rich error reporting with `DatasetReadException` (cell coordinates, field names)
 
 ## Instruction Files Structure
 
@@ -86,13 +87,14 @@ When generating Dataset4J code, always:
 // Define record with annotations
 @GenerateFields(className = "Fields", columnsClassName = "Cols")
 public record Employee(
-    @DataColumn(name = "Employee ID", order = 1, required = true)
+    @DataColumn(name = "Employee ID", required = true)
     String id,
-    @DataColumn(name = "Name", order = 2) 
+    @DataColumn(name = "Name")
     String name,
-    @DataColumn(name = "Email", order = 3)
+    @DataColumn(name = "Email")
     String email
 ) {}
+// Note: order is optional — columns are matched by header name when omitted
 
 // Create and manipulate dataset
 Dataset<Employee> employees = Dataset.of(

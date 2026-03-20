@@ -1,6 +1,7 @@
 package dataset4j.parquet;
 
 import dataset4j.Dataset;
+import dataset4j.DatasetReadException;
 import dataset4j.annotations.AnnotationProcessor;
 import dataset4j.annotations.ColumnMetadata;
 
@@ -218,9 +219,14 @@ public class ParquetDatasetReader {
                 records.add((T) record2);
                 records.add((T) record3);
             }
+        } catch (DatasetReadException e) {
+            throw e;
         } catch (Exception e) {
-            // If mock data creation fails, return empty list
-            System.out.println("Note: Mock data creation failed, returning empty list: " + e.getMessage());
+            throw DatasetReadException.builder()
+                .recordClass(recordClass)
+                .parseMessage("Failed to read Parquet row group: " + e.getMessage())
+                .cause(e)
+                .build();
         }
         
         return records;
