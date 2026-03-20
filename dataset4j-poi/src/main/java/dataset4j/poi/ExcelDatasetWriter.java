@@ -300,7 +300,7 @@ public class ExcelDatasetWriter {
             if (component != null) {
                 try {
                     Object value = component.getAccessor().invoke(record);
-                    setCellValue(cell, value, columnStyles.get(fieldMeta.getFieldName()));
+                    setCellValue(cell, value, fieldMeta, columnStyles.get(fieldMeta.getFieldName()));
                 } catch (Exception e) {
                     System.err.printf("Warning: Failed to extract value from field '%s' in row %d: %s%n",
                             fieldMeta.getFieldName(), row.getRowNum(), e.getMessage());
@@ -319,9 +319,9 @@ public class ExcelDatasetWriter {
         return null;
     }
     
-    private void setCellValue(Cell cell, Object value, CellStyle columnStyle) {
+    private void setCellValue(Cell cell, Object value, FieldMeta fieldMeta, CellStyle columnStyle) {
         if (value == null) {
-            cell.setCellValue("");
+            cell.setCellValue(fieldMeta.getDefaultValue());
         } else if (value instanceof Number) {
             cell.setCellValue(((Number) value).doubleValue());
         } else if (value instanceof Boolean) {

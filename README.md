@@ -11,7 +11,7 @@ A modular, lightweight DataFrame-like library for Java records. Port your pandas
 <dependency>
     <groupId>io.github.amah</groupId>
     <artifactId>dataset4j</artifactId>
-    <version>1.0.12</version>
+    <version>1.0.11</version>
 </dependency>
 ```
 
@@ -21,21 +21,21 @@ A modular, lightweight DataFrame-like library for Java records. Port your pandas
 <dependency>
     <groupId>io.github.amah</groupId>
     <artifactId>dataset4j-core</artifactId>
-    <version>1.0.12</version>
+    <version>1.0.11</version>
 </dependency>
 
 <!-- Add Excel/CSV support -->
 <dependency>
     <groupId>io.github.amah</groupId>
     <artifactId>dataset4j-poi</artifactId>
-    <version>1.0.12</version>
+    <version>1.0.11</version>
 </dependency>
 
 <!-- Add Parquet support (lightweight, no Hadoop) -->
 <dependency>
     <groupId>io.github.amah</groupId>
     <artifactId>dataset4j-parquet</artifactId>
-    <version>1.0.12</version>
+    <version>1.0.11</version>
 </dependency>
 ```
 
@@ -347,4 +347,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Dataset4J v1.0.12** - Bringing pandas-like data processing to Java with type safety and performance.
+**Dataset4J v1.0.11** - Bringing pandas-like data processing to Java with type safety and performance.
