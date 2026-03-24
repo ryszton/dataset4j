@@ -150,6 +150,32 @@ class ExcelReaderErrorTest {
     }
 
     @Test
+    void shouldReportLocationWhenStringCannotBeParsedAsDouble() throws IOException {
+        // Row 0 is valid, row 1 has "hello" in the Salary (double) column
+        Path file = createExcel("bad_double.xlsx",
+            new String[]{"ID", "Salary", "Start Date"},
+            new Object[][]{
+                {1, 50000.0, "2024-01-01"},
+                {2, "hello", "2024-02-01"},
+                {3, 70000.0, "2024-03-01"}
+            });
+
+        DatasetReadException ex = assertThrows(DatasetReadException.class, () ->
+            ExcelDatasetReader.fromFile(file.toString())
+                .readAs(StrictEmployee.class));
+
+        // Row 2 (0-based), Column 1 (B) → cell B3
+        assertEquals(2, ex.getRow());
+        assertEquals(1, ex.getColumn());
+        assertEquals("salary", ex.getFieldName());
+        assertEquals("StrictEmployee.salary", ex.getQualifiedFieldName());
+        assertTrue(ex.getCellReference().contains("B3"), "Expected cell ref B3 but got: " + ex.getCellReference());
+        assertTrue(ex.getMessage().contains("hello"), "Message should contain raw value 'hello': " + ex.getMessage());
+        assertTrue(ex.getMessage().contains("double") || ex.getMessage().contains("Double"),
+            "Message should mention target type: " + ex.getMessage());
+    }
+
+    @Test
     void shouldDefaultMissingColumnsWhenNameNotFound() throws IOException {
         // Only provide 'Employee ID' — 'Full Name' and 'Hire Date' are missing
         Path file = createExcel("partial.xlsx",
