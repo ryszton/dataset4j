@@ -189,7 +189,7 @@ class ExcelReaderErrorTest {
 
         assertEquals(1, ds.size());
         assertEquals(99, ds.get(0).id());
-        assertEquals("", ds.get(0).name()); // default for String
+        assertNull(ds.get(0).name()); // default for String
         assertNull(ds.get(0).hireDate());   // default for LocalDate
     }
 

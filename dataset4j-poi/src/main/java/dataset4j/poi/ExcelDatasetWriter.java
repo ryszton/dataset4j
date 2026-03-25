@@ -41,6 +41,10 @@ public class ExcelDatasetWriter {
     // Custom cell writers
     private CellWriter globalCellWriter;
     private final Map<String, CellWriter> fieldCellWriters = new HashMap<>();
+
+    // Configurable default values for null fields
+    private final Map<Class<?>, Object> typeDefaults = new HashMap<>();
+    private final Map<String, Object> fieldDefaults = new HashMap<>();
     
     private ExcelDatasetWriter(String filePath) {
         this.filePath = filePath;
@@ -213,6 +217,29 @@ public class ExcelDatasetWriter {
     }
 
     /**
+     * Set a default value for all null fields of the given type during writing.
+     * @param type the field type to configure
+     * @param value the default value to write
+     * @return this writer for chaining
+     */
+    public ExcelDatasetWriter defaultValue(Class<?> type, Object value) {
+        this.typeDefaults.put(type, value);
+        return this;
+    }
+
+    /**
+     * Set a default value for a specific null field during writing.
+     * Per-field defaults take priority over type-based defaults.
+     * @param fieldName the record field name
+     * @param value the default value to write
+     * @return this writer for chaining
+     */
+    public ExcelDatasetWriter defaultValue(String fieldName, Object value) {
+        this.fieldDefaults.put(fieldName, value);
+        return this;
+    }
+
+    /**
      * Use pre-built metadata for field selection.
      * @param <T> record type
      * @param metadata POJO metadata
@@ -340,6 +367,9 @@ public class ExcelDatasetWriter {
             if (component != null) {
                 try {
                     Object value = component.getAccessor().invoke(record);
+                    if (value == null) {
+                        value = resolveWriteDefault(fieldMeta);
+                    }
                     CellWriter writer = resolveWriter(fieldMeta.getFieldName());
                     CellWriterContext context = new CellWriterContext(
                             cell, value, fieldMeta, workbook,
@@ -353,6 +383,25 @@ public class ExcelDatasetWriter {
                 }
             }
         }
+    }
+
+    /**
+     * Resolve default value for a null field during writing.
+     * Priority: per-field override > type-based override > @DataColumn(defaultValue) annotation > null.
+     */
+    private Object resolveWriteDefault(FieldMeta fieldMeta) {
+        // 1. Per-field override
+        if (fieldDefaults.containsKey(fieldMeta.getFieldName())) {
+            return fieldDefaults.get(fieldMeta.getFieldName());
+        }
+
+        // 2. Type-based override
+        if (typeDefaults.containsKey(fieldMeta.getFieldType())) {
+            return typeDefaults.get(fieldMeta.getFieldType());
+        }
+
+        // 3. Fall through to null — DefaultCellWriter handles @DataColumn(defaultValue)
+        return null;
     }
 
     private CellWriter resolveWriter(String fieldName) {

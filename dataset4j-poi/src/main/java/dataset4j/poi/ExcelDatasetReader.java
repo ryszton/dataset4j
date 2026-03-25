@@ -41,6 +41,10 @@ public class ExcelDatasetReader {
     private boolean hasHeaders = true;
     private int startRow = 0;
 
+    // Configurable default values
+    private final Map<Class<?>, Object> typeDefaults = new LinkedHashMap<>();
+    private final Map<String, Object> fieldDefaults = new LinkedHashMap<>();
+
     private ExcelDatasetReader(String filePath) {
         this.filePath = filePath;
     }
@@ -95,6 +99,29 @@ public class ExcelDatasetReader {
      */
     public ExcelDatasetReader startRow(int startRow) {
         this.startRow = startRow;
+        return this;
+    }
+
+    /**
+     * Set a default value for all fields of the given type when cells are blank, empty, or null.
+     * @param type the field type to configure
+     * @param value the default value to use
+     * @return this reader for chaining
+     */
+    public ExcelDatasetReader defaultValue(Class<?> type, Object value) {
+        this.typeDefaults.put(type, value);
+        return this;
+    }
+
+    /**
+     * Set a default value for a specific field when its cell is blank, empty, or null.
+     * Per-field defaults take priority over type-based defaults.
+     * @param fieldName the record field name
+     * @param value the default value to use
+     * @return this reader for chaining
+     */
+    public ExcelDatasetReader defaultValue(String fieldName, Object value) {
+        this.fieldDefaults.put(fieldName, value);
         return this;
     }
 
@@ -206,7 +233,7 @@ public class ExcelDatasetReader {
                 if (columnMeta != null && !columnMeta.isIgnored()) {
                     int colIndex = resolveColumnIndex(columnMeta, headerIndex);
                     if (colIndex < 0) {
-                        values[i] = getDefaultValue(component.getType());
+                        values[i] = resolveDefault(component.getType(), columnMeta);
                         continue;
                     }
                     Cell cell = row.getCell(colIndex);
@@ -227,7 +254,7 @@ public class ExcelDatasetReader {
                             .build();
                     }
                 } else {
-                    values[i] = getDefaultValue(component.getType());
+                    values[i] = resolveDefault(component.getType(), columnMeta);
                 }
             }
 
@@ -285,12 +312,12 @@ public class ExcelDatasetReader {
 
     private Object parseCellValue(Cell cell, Class<?> targetType, ColumnMetadata columnMeta) {
         if (cell == null || cell.getCellType() == CellType.BLANK) {
-            return getDefaultValue(targetType);
+            return resolveDefault(targetType, columnMeta);
         }
 
         String cellValue = getCellValueAsString(cell, targetType);
         if (cellValue.trim().isEmpty()) {
-            return getDefaultValue(targetType);
+            return resolveDefault(targetType, columnMeta);
         }
 
         // Use FormatProvider for parsing if available
@@ -381,8 +408,35 @@ public class ExcelDatasetReader {
         return value;
     }
 
+    /**
+     * Resolve the default value using priority chain:
+     * 1. Per-field override (fieldDefaults)
+     * 2. Type-based override (typeDefaults)
+     * 3. @DataColumn(defaultValue) annotation
+     * 4. Built-in hardcoded defaults
+     */
+    private Object resolveDefault(Class<?> targetType, ColumnMetadata columnMeta) {
+        // 1. Per-field override
+        if (columnMeta != null && fieldDefaults.containsKey(columnMeta.getFieldName())) {
+            return fieldDefaults.get(columnMeta.getFieldName());
+        }
+
+        // 2. Type-based override
+        if (typeDefaults.containsKey(targetType)) {
+            return typeDefaults.get(targetType);
+        }
+
+        // 3. @DataColumn(defaultValue) annotation
+        if (columnMeta != null && !columnMeta.getDefaultValue().isEmpty()) {
+            return parseBasicValue(columnMeta.getDefaultValue(), targetType);
+        }
+
+        // 4. Built-in hardcoded defaults
+        return getDefaultValue(targetType);
+    }
+
     private Object getDefaultValue(Class<?> type) {
-        if (type == String.class) return "";
+        if (type == String.class) return null;
         if (type == int.class) return 0;
         if (type == long.class) return 0L;
         if (type == double.class) return 0.0;
