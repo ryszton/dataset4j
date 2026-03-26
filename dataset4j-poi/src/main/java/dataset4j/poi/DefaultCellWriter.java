@@ -17,9 +17,9 @@ import java.time.temporal.TemporalAccessor;
  * {@code dateFormat} pattern; for numbers it uses {@code numberFormat} if present,
  * otherwise {@code toString()}.
  */
-final class DefaultCellWriter implements CellWriter {
+public final class DefaultCellWriter implements CellWriter {
 
-    static final DefaultCellWriter INSTANCE = new DefaultCellWriter();
+    public static final DefaultCellWriter INSTANCE = new DefaultCellWriter();
 
     private DefaultCellWriter() {}
 
