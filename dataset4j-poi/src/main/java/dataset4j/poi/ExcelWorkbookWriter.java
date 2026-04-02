@@ -10,7 +10,6 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -35,14 +34,20 @@ import java.util.Map;
  * .addSheet("SheetA", aResultsDataset, AResults.Fields.ID, AResults.Fields.VALUE)
  * }</pre>
  *
- * <p>All sheets inherit the workbook-level {@link #headers(boolean)} and
- * {@link #autoSize(boolean)} settings.
+ * <p>All sheets inherit the workbook-level {@link #headers(boolean)},
+ * {@link #autoSize(boolean)}, {@link #cellWriter(CellWriter)}, and
+ * {@link #defaultValue(Class, Object)} settings.
  */
 public class ExcelWorkbookWriter {
 
     private final String filePath;
     private boolean defaultHeaders = true;
     private boolean defaultAutoSize = true;
+
+    private CellWriter globalCellWriter;
+    private final Map<String, CellWriter> fieldCellWriters = new HashMap<>();
+    private final Map<Class<?>, Object> typeDefaults = new HashMap<>();
+    private final Map<String, Object> fieldDefaults = new HashMap<>();
 
     private final List<SheetEntry<?>> sheets = new ArrayList<>();
 
@@ -57,8 +62,10 @@ public class ExcelWorkbookWriter {
      */
     public static ExcelWorkbookWriter toFile(String filePath) {
         Path path = Paths.get(filePath).normalize();
-        if (path.toString().contains("..")) {
-            throw new SecurityException("Path traversal detected in file path: " + filePath);
+        for (int i = 0; i < path.getNameCount(); i++) {
+            if ("..".equals(path.getName(i).toString())) {
+                throw new SecurityException("Path traversal detected in file path: " + filePath);
+            }
         }
         return new ExcelWorkbookWriter(filePath);
     }
@@ -76,6 +83,51 @@ public class ExcelWorkbookWriter {
      */
     public ExcelWorkbookWriter autoSize(boolean autoSize) {
         this.defaultAutoSize = autoSize;
+        return this;
+    }
+
+    /**
+     * Set a global custom cell writer applied to all cells across all sheets.
+     * @param writer the cell writer
+     * @return this writer for chaining
+     */
+    public ExcelWorkbookWriter cellWriter(CellWriter writer) {
+        this.globalCellWriter = writer;
+        return this;
+    }
+
+    /**
+     * Set a custom cell writer for a specific field across all sheets.
+     * Per-field writers take priority over the global writer.
+     * @param fieldName the field name to target
+     * @param writer the cell writer
+     * @return this writer for chaining
+     */
+    public ExcelWorkbookWriter cellWriter(String fieldName, CellWriter writer) {
+        this.fieldCellWriters.put(fieldName, writer);
+        return this;
+    }
+
+    /**
+     * Set a default value for all null fields of the given type during writing.
+     * @param type the field type to configure
+     * @param value the default value to write
+     * @return this writer for chaining
+     */
+    public ExcelWorkbookWriter defaultValue(Class<?> type, Object value) {
+        this.typeDefaults.put(type, value);
+        return this;
+    }
+
+    /**
+     * Set a default value for a specific null field during writing.
+     * Per-field defaults take priority over type-based defaults.
+     * @param fieldName the record field name
+     * @param value the default value to write
+     * @return this writer for chaining
+     */
+    public ExcelWorkbookWriter defaultValue(String fieldName, Object value) {
+        this.fieldDefaults.put(fieldName, value);
         return this;
     }
 
@@ -135,56 +187,46 @@ public class ExcelWorkbookWriter {
 
     @SuppressWarnings("unchecked")
     private <T> void renderEntry(Workbook workbook, SheetEntry<T> entry) {
-        Dataset<T> dataset = entry.dataset;
+        Dataset<T> dataset = entry.dataset();
 
         if (dataset.isEmpty()) {
-            workbook.createSheet(entry.sheetName);
+            workbook.createSheet(entry.sheetName());
             return;
         }
 
         Class<?> rawClass = dataset.toList().get(0).getClass();
         if (!rawClass.isRecord()) {
             throw new IllegalArgumentException(
-                    "Sheet '" + entry.sheetName + "': dataset must contain record types");
+                    "Sheet '" + entry.sheetName() + "': dataset must contain record types");
         }
 
         PojoMetadata<T> metadata = MetadataCache.getMetadata((Class<T>) rawClass);
 
         List<FieldMeta> fieldsToExport;
-        if (entry.fieldNames != null && entry.fieldNames.length > 0) {
-            fieldsToExport = FieldSelector.from(metadata).fieldsArray(entry.fieldNames).select();
+        if (entry.fieldNames() != null && entry.fieldNames().length > 0) {
+            fieldsToExport = FieldSelector.from(metadata).fieldsArray(entry.fieldNames()).select();
         } else {
             fieldsToExport = metadata.getExportableFields();
         }
 
         if (fieldsToExport.isEmpty()) {
             throw new IllegalArgumentException(
-                    "Sheet '" + entry.sheetName + "': no fields selected for export");
+                    "Sheet '" + entry.sheetName() + "': no fields selected for export");
         }
 
         SheetRenderConfig config = new SheetRenderConfig(
                 fieldsToExport,
                 defaultHeaders,
                 defaultAutoSize,
-                null,
-                Collections.emptyMap(),
-                Collections.emptyMap(),
-                Collections.emptyMap());
+                globalCellWriter,
+                fieldCellWriters,
+                typeDefaults,
+                fieldDefaults);
 
-        ExcelSheetRenderer.renderSheet(workbook, entry.sheetName, dataset, config);
+        ExcelSheetRenderer.renderSheet(workbook, entry.sheetName(), dataset, config);
     }
 
     // -------------------------------------------------------------------------
 
-    private static final class SheetEntry<T> {
-        final String sheetName;
-        final Dataset<T> dataset;
-        final String[] fieldNames; // null → use all exportable fields
-
-        SheetEntry(String sheetName, Dataset<T> dataset, String[] fieldNames) {
-            this.sheetName = sheetName;
-            this.dataset = dataset;
-            this.fieldNames = fieldNames;
-        }
-    }
+    private record SheetEntry<T>(String sheetName, Dataset<T> dataset, String[] fieldNames) {}
 }

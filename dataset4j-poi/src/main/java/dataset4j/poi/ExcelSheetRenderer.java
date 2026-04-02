@@ -36,13 +36,13 @@ final class ExcelSheetRenderer {
         }
 
         CellStyle headerStyle = createHeaderStyle(workbook);
-        Map<String, CellStyle> columnStyles = buildColumnStyles(config.fieldsToExport, workbook);
+        Map<String, CellStyle> columnStyles = buildColumnStyles(config.fieldsToExport(), workbook);
 
         int rowIndex = 0;
 
-        if (config.includeHeaders) {
+        if (config.includeHeaders()) {
             Row headerRow = sheet.createRow(rowIndex++);
-            writeHeaders(headerRow, config.fieldsToExport, headerStyle);
+            writeHeaders(headerRow, config.fieldsToExport(), headerStyle);
         }
 
         for (T record : dataset.toList()) {
@@ -50,10 +50,10 @@ final class ExcelSheetRenderer {
             writeDataRow(dataRow, record, config, columnStyles, workbook);
         }
 
-        applyColumnFormatting(sheet, config.fieldsToExport, config.includeHeaders);
+        applyColumnFormatting(sheet, config.fieldsToExport(), config.includeHeaders());
 
-        if (config.autoSizeColumns) {
-            for (int i = 0; i < config.fieldsToExport.size(); i++) {
+        if (config.autoSizeColumns()) {
+            for (int i = 0; i < config.fieldsToExport().size(); i++) {
                 sheet.autoSizeColumn(i);
             }
         }
@@ -80,8 +80,8 @@ final class ExcelSheetRenderer {
 
         RecordComponent[] components = record.getClass().getRecordComponents();
 
-        for (int i = 0; i < config.fieldsToExport.size(); i++) {
-            FieldMeta fieldMeta = config.fieldsToExport.get(i);
+        for (int i = 0; i < config.fieldsToExport().size(); i++) {
+            FieldMeta fieldMeta = config.fieldsToExport().get(i);
             Cell cell = row.createCell(i);
 
             RecordComponent component = findComponent(components, fieldMeta.getFieldName());
@@ -107,19 +107,19 @@ final class ExcelSheetRenderer {
     }
 
     private static Object resolveWriteDefault(FieldMeta fieldMeta, SheetRenderConfig config) {
-        if (config.fieldDefaults.containsKey(fieldMeta.getFieldName())) {
-            return config.fieldDefaults.get(fieldMeta.getFieldName());
+        if (config.fieldDefaults().containsKey(fieldMeta.getFieldName())) {
+            return config.fieldDefaults().get(fieldMeta.getFieldName());
         }
-        if (config.typeDefaults.containsKey(fieldMeta.getFieldType())) {
-            return config.typeDefaults.get(fieldMeta.getFieldType());
+        if (config.typeDefaults().containsKey(fieldMeta.getFieldType())) {
+            return config.typeDefaults().get(fieldMeta.getFieldType());
         }
         return null;
     }
 
     private static CellWriter resolveWriter(String fieldName, SheetRenderConfig config) {
-        CellWriter perField = config.fieldCellWriters.get(fieldName);
+        CellWriter perField = config.fieldCellWriters().get(fieldName);
         if (perField != null) return perField;
-        if (config.globalCellWriter != null) return config.globalCellWriter;
+        if (config.globalCellWriter() != null) return config.globalCellWriter();
         return DefaultCellWriter.INSTANCE;
     }
 
@@ -205,7 +205,7 @@ final class ExcelSheetRenderer {
         }
     }
 
-    static CellStyle createHeaderStyle(Workbook workbook) {
+    private static CellStyle createHeaderStyle(Workbook workbook) {
         CellStyle style = workbook.createCellStyle();
         Font font = workbook.createFont();
         font.setBold(true);
@@ -219,7 +219,7 @@ final class ExcelSheetRenderer {
         return style;
     }
 
-    static short getColorIndex(String color) {
+    private static short getColorIndex(String color) {
         if (color.startsWith("#")) {
             return IndexedColors.AUTOMATIC.getIndex();
         }

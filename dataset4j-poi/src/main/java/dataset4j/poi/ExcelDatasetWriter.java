@@ -55,10 +55,11 @@ public class ExcelDatasetWriter {
      * @return new writer instance
      */
     public static ExcelDatasetWriter toFile(String filePath) {
-        // Validate file path to prevent directory traversal attacks
         Path path = Paths.get(filePath).normalize();
-        if (path.toString().contains("..")) {
-            throw new SecurityException("Path traversal detected in file path: " + filePath);
+        for (int i = 0; i < path.getNameCount(); i++) {
+            if ("..".equals(path.getName(i).toString())) {
+                throw new SecurityException("Path traversal detected in file path: " + filePath);
+            }
         }
         return new ExcelDatasetWriter(filePath);
     }
